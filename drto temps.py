@@ -16,6 +16,7 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 import seaborn as sns
+from netCDF4 import Dataset 
 
 #Reset wd
 os.chdir('C:\\Users\\jaely\\Documents\\Research_2020')
@@ -171,3 +172,15 @@ year99 = pd.DataFrame([y99(yearsu[i]) for i in np.arange(0,len(yearsu),1)])
 boxes = sns.boxplot(data=year99,palette=cors)
 boxes.set(xlabel= "site", ylabel = "Degrees C")
 boxes.set_title("99th percentile annual temps by site")
+
+#Load MMM data from NOAA
+ncin = Dataset('ct5km_climatology_mmm.nc', 'r', format='NETCDF4')
+print(ncin.dimensions.keys())
+print(ncin.variables.keys())
+
+mmm_nc = ncin.variables['sst_clim_mmm'][:]
+print(mmm_nc.long_name)
+print(mmm_nc.units)
+clim_lats = ncin.variables['lat'][:]
+clim_lons = ncin.variables['lon'][:]
+ncin.close()
