@@ -17,6 +17,7 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 import seaborn as sns
 from netCDF4 import Dataset 
+import numpy.ma as npm
 
 #Reset wd
 os.chdir('C:\\Users\\jaely\\Documents\\Research_2020')
@@ -174,13 +175,32 @@ boxes.set(xlabel= "site", ylabel = "Degrees C")
 boxes.set_title("99th percentile annual temps by site")
 
 #Load MMM data from NOAA
+os.chdir('C:\\Users\\jaely\\Documents\\Research_2020')
+joined = joined.reset_index()
+
 ncin = Dataset('ct5km_climatology_mmm.nc', 'r', format='NETCDF4')
 print(ncin.dimensions.keys())
 print(ncin.variables.keys())
 
-mmm_nc = ncin.variables['sst_clim_mmm'][:]
+mmm_nc = ncin.variables['sst_clim_mmm']
+
 print(mmm_nc.long_name)
 print(mmm_nc.units)
+mmm_nc = mmm_nc[0,:,:]
+
 clim_lats = ncin.variables['lat'][:]
 clim_lons = ncin.variables['lon'][:]
 ncin.close()
+
+#Function to find closest lat or lon value in mmm set to location
+
+def find_nearest(array, value):
+    array = np.asarray(array)
+    idx = (np.abs(array - value)).argmin()
+    return idx
+
+lats = [find_nearest(clim_lats,joined['latitude'][i]) for i in np.arange(0,len(joined['latitude']),1)]
+lons = [find_nearest(clim_lons,joined['longitude'][i]) for i in np.arange(0,len(joined['longitude']),1)]
+
+#Pull out MMMs for each point
+mmms = mmm_nc[lats,lons].data
