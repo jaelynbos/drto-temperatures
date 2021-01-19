@@ -4,14 +4,13 @@ Created on Wed Dec 30 11:34:42 2020
 
 @author: jaely
 """
-
 #Load necessary libraries
 import numpy as np
 import pandas as pd
 import os
 from shapely.geometry import Point
 import matplotlib.pyplot as plt
-import geopandas
+import geopandas as gpd
 from datetime import datetime
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
@@ -28,7 +27,11 @@ drto_locs = pd.read_csv('DRTO_locations.csv')
 #Make coordinates plottable
 drto_locs['coordinates'] = drto_locs[['longitude', 'latitude']].values.tolist()
 drto_locs['coordinates'] = drto_locs['coordinates'].apply(Point)
-drto_locs = geopandas.GeoDataFrame(drto_locs, geometry='coordinates')
+drto_locs = gpd.GeoDataFrame(drto_locs, geometry='coordinates')
+
+#Sort in alphabetical order and reindex
+drto_locs = drto_locs.sort_values(by = 'Point')
+drto_locs = drto_locs.reset_index(drop = True)
 
 #Read in water temp data (cleaned up in R)
 drto_temps = pd.read_csv('drto_num.csv')
@@ -45,26 +48,15 @@ drto_times['t2'] = drto_times['t'].apply(dstrip)
 
 #Read in geomorphic and benthic data
 os.chdir('C:\\Users\\jaely\\Documents\\Research_2020\\ACA_DRTO_data')
-geomorphic = geopandas.read_file('geomorphic.geojson')
-benthic = geopandas.read_file('benthic.geojson')
-#Plot
-#fig, ax = plt.subplots(1, figsize=(20,20))
-#base = geomorphic.plot(ax=ax, color='lightblue')
-#drto_locs.plot(ax=base,color="red")
-#_ = ax.axis('off')
-
-#fig, ax = plt.subplots(1, figsize=(20,20))
-#base = benthic.plot(ax=ax, color='lightblue')
-#drto_locs.plot(ax=base,color="red")
-#_ = ax.axis('off')
+geomorphic = gpd.read_file('geomorphic.geojson')
 
 #Convert CRS for loc points to match geomorphic data
 drto_locs.crs = {'init': 'epsg:4326'}
 
 #Extract geo values to location points
-joined = geopandas.sjoin(drto_locs, geomorphic, how='inner', op='intersects')    
+joined = gpd.sjoin(drto_locs, geomorphic, how='inner', op='intersects')    
 print(joined['class'].value_counts())
-
+joined = joined.reset_index(drop = True)
 
 #Export joined table to csv
 joined.to_csv("drto_joined.csv",index=False,mode='w')
@@ -78,7 +70,6 @@ splt = lambda x: x.split("_")
 sites = sites.apply(splt)
 keep = lambda x: x[1]
 sites=sites.apply(keep)
-drto_locs['Point'] = sites
 joined['Point'] = sites
 
 #Split up point names in the temps dataset
@@ -88,17 +79,16 @@ keep0 = lambda x: x[0]
 pointnames = pointnames.apply(keep0)
 
 #Throw out temps points outside the study area
-keep = pd.Series([pointnames[i] in sites.values for i in np.arange(0,len(pointnames),1)])
-temps_filt = drto_temps.drop(drto_temps.columns[~keep],axis=1)
+in_geo = pd.Series([pointnames[i] in sites.values for i in np.arange(0,len(pointnames),1)])
+temps_filt = drto_temps.drop(drto_temps.columns[~in_geo],axis=1)
 pointnames = pd.Series(temps_filt.columns)
 pointnames = pointnames.apply(splt)
 keep0 = lambda x: x[0]
 pointnames = pointnames.apply(keep0)
 
-#Sort "joined" by alphabetical order of points
-joined = joined.sort_values(by = 'Point')
-
-#Aggregate the filtered temps dataset in a sane way
+#Aggregate the filtered temps dataset by point
+#Points with two simultanouesly active temperature
+#loggers are aggregated by mean
 test_keys = list(temps_filt.columns)
 test_values = list (pointnames)
 
@@ -116,7 +106,7 @@ rcs = pd.Series([rc(i) for i in np.arange(0,len(pointnames),1)])
 
 #Plot all sites over time by color
 #Make color variable
-classcors = {"Reef Slope":"limegreen", "Reef Crest":"gold","Back Reef Slope":"c","Sheltered Reef Slope":"dodgerblue","Outer Reef Flat":"orangered","Plateau":"orange"}
+classcors = {"Reef Slope":"limegreen", "Reef Crest":"gold","Back Reef Slope":"c","Sheltered Reef Slope":"mediumblue","Outer Reef Flat":"orangered","Plateau":"orange"}
 cors = rcs.replace(classcors)
 
 legend_stuff = [Line2D([0], [0], marker='o', color='w', label='Slope', markerfacecolor='limegreen', markersize=8),
@@ -133,13 +123,27 @@ for i in np.arange(0,len(cors),1):
     plt.title("Temperature over time")
     plt.legend(handles = legend_stuff,loc='lower left')
 
-#Get first and last time points for each site
+#Save time variable under new name
 times = drto_times['t2']
 
+#Pull out times
 temps_filt = temps_filt[times < '2013-12-31 00:00:00']
 times = times[times < '2013-12-31 00:00:00']
 temps_filt = temps_filt[times > '2008-06-01 00:00:00']
 times =  times[times > '2008-06-01 00:00:00']
+
+#Remove columns with significant NAs in timeframe
+temps_filt = temps_filt.drop(temps_filt.columns[[18,19,20]],axis=1)
+joined_filt = joined.drop(joined.index[[18,19,20]],axis=0)
+
+#Delete unnecessary variables to avoid confusion
+del pointnames,rcs, cors
+
+#Remake rcs and color variables of correct length
+pointnames2 = temps_filt.columns
+rc = lambda x:joined.reefclass[pointnames2[x]==sites].iloc[0]
+rcs2 = pd.Series([rc(i) for i in np.arange(0,len(pointnames2),1)])
+cors2 = rcs2.replace(classcors)
 
 #Daily max and min with boxplots
 days = times.dt.date
@@ -147,19 +151,19 @@ daysu = times.dt.date.unique()
 
 dmin = lambda x: temps_filt[days==x].min(axis=0)
 dailymin = pd.DataFrame([dmin(daysu[i]) for i in np.arange(0,len(daysu),1)])
-boxes = sns.boxplot(data=dailymin,palette=cors)
+boxes = sns.boxplot(data=dailymin,palette=cors2)
 boxes.set(xlabel= "site", ylabel = "Degrees C")
 boxes.set_title("Daily minimum temperature by site")
 
 dmax = lambda x: temps_filt[days==x].max(axis=0)
 dailymax = pd.DataFrame([dmax(daysu[i]) for i in np.arange(0,len(daysu),1)])
-boxes = sns.boxplot(data=dailymax,palette=cors)
+boxes = sns.boxplot(data=dailymax,palette=cors2)
 boxes.set(xlabel= "site", ylabel = "Degrees C")
 boxes.set_title("Daily maximum temperature by site")
 
 #Daily flux with boxplots
 dailydiff = dailymax - dailymin 
-boxes = sns.boxplot(data=dailydiff,palette=cors)
+boxes = sns.boxplot(data=dailydiff,palette=cors2)
 boxes.set(xlabel= "site", ylabel = "Degrees C")
 boxes.set_title("Daily differences in temperature by site")
     
@@ -170,7 +174,7 @@ yearsu = times.dt.year.unique()
 y99 = lambda x: temps_filt[years==x].quantile(q=0.99,axis=0)
 year99 = pd.DataFrame([y99(yearsu[i]) for i in np.arange(0,len(yearsu),1)])
 
-boxes = sns.boxplot(data=year99,palette=cors)
+boxes = sns.boxplot(data=year99,palette=cors2)
 boxes.set(xlabel= "site", ylabel = "Degrees C")
 boxes.set_title("99th percentile annual temps by site")
 
@@ -199,8 +203,31 @@ def find_nearest(array, value):
     idx = (np.abs(array - value)).argmin()
     return idx
 
-lats = [find_nearest(clim_lats,joined['latitude'][i]) for i in np.arange(0,len(joined['latitude']),1)]
-lons = [find_nearest(clim_lons,joined['longitude'][i]) for i in np.arange(0,len(joined['longitude']),1)]
+lats = [find_nearest(clim_lats,joined_filt['latitude'][i]) for i in np.arange(0,len(joined_filt['latitude']),1)]
+lons = [find_nearest(clim_lons,joined_filt['longitude'][i]) for i in np.arange(0,len(joined_filt['longitude']),1)]
 
 #Pull out MMMs for each point
 mmms = mmm_nc[lats,lons].data
+
+#Calculate daily mean temperatures
+dmean = lambda x: temps_filt[days==x].mean(axis=0)
+dailymeans = pd.DataFrame([dmean(daysu[i]) for i in np.arange(0,len(daysu),1)])
+
+#Calculate degree heating weeks per day
+dhw = lambda x,y: ((round(dailymeans.iloc[x,y]-mmms[y])/7) if ((dailymeans.iloc[x,y]-mmms[y])>=1) else 0)
+dhw_data = [[dhw(i,j) for i in np.arange(0,len(dailymeans.index),1)] for j in np.arange(0,len(mmms),1)]
+dhw_data = pd.DataFrame(dhw_data).transpose()
+dhw_data.columns = dailymeans.columns
+
+#Summarize into DHWs per year
+dys = times.groupby(days).min().dt.year
+
+yDHW = lambda x: dhw_data[dys.values==x].sum(axis=0)
+yearlyDHW = pd.DataFrame([yDHW(yearsu[i]) for i in np.arange(0,len(yearsu),1)])
+
+boxes = sns.boxplot(data=yearlyDHW,palette=cors2)
+boxes.set(xlabel= "site", ylabel = "Degrees C")
+boxes.set_title("Annual DHWs temps by site")
+
+#There are some serious problems with the interpretation of this that I will address
+#at a later date
